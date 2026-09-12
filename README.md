@@ -279,6 +279,108 @@ The Loki datasource was successfully connected to Grafana and opened in Grafana 
 
 ---
 
+## Log Collection with Grafana Alloy
+
+Grafana Alloy is used on the Linux host to collect system (`systemd-journal`) and Docker container logs and forward them to this Loki instance.
+
+See [`config.alloy`](./config.alloy) for the full Alloy configuration used in this lab.
+
+### Install Grafana Alloy
+
+```bash
+sudo apt update
+sudo apt install gpg
+
+sudo mkdir -p /etc/apt/keyrings
+sudo wget -O /etc/apt/keyrings/grafana.asc \
+https://apt.grafana.com/gpg-full.key
+sudo chmod 644 /etc/apt/keyrings/grafana.asc
+
+echo "deb [signed-by=/etc/apt/keyrings/grafana.asc] https://apt.grafana.com stable main" | \
+sudo tee /etc/apt/sources.list.d/grafana.list
+
+sudo apt-get update
+sudo apt-get install alloy
+
+alloy --version
+```
+
+### Alloy Service
+
+```bash
+sudo systemctl status alloy
+sudo systemctl start alloy
+sudo systemctl enable alloy
+sudo systemctl restart alloy
+sudo systemctl stop alloy
+```
+
+The configuration file lives at `/etc/alloy/config.alloy` on the host — use the [`config.alloy`](./config.alloy) file in this repository as its content. It forwards logs to this Loki instance at `http://127.0.0.1:3100/loki/api/v1/push`, collects the systemd journal, and collects Docker container logs via the Docker socket.
+
+### Docker Permissions
+
+Alloy's service user needs access to the Docker socket to collect container logs:
+
+```bash
+id alloy
+sudo -u alloy docker ps
+```
+
+### Validate and Monitor
+
+```bash
+sudo alloy fmt /etc/alloy/config.alloy
+sudo systemctl status alloy
+sudo journalctl -u alloy -f
+```
+
+Check ingestion metrics:
+
+```bash
+curl -s http://127.0.0.1:12345/metrics | grep 'loki_write_sent_entries_total'
+curl -s http://127.0.0.1:12345/metrics | grep 'loki_write_dropped_entries_total'
+```
+
+### Troubleshooting: `entry too far behind`
+
+If Loki rejects entries with:
+
+```text
+entry too far behind
+```
+
+it means a log entry is older than the timestamp window Loki currently accepts for a stream. This lab's `loki-config.yaml` sets:
+
+```yaml
+ingester:
+  max_chunk_age: 24h
+```
+
+to provide a larger out-of-order ingestion window. Validate any Loki config change before restarting the container:
+
+```bash
+docker run --rm \
+  -v /opt/monitoring/loki/loki-config.yaml:/etc/loki/config.yaml:ro \
+  grafana/loki:3.7.0 \
+  -config.file=/etc/loki/config.yaml \
+  -verify-config=true
+
+sudo docker restart loki
+curl -s http://127.0.0.1:3100/ready
+```
+
+> Increasing `max_chunk_age` can increase memory usage and should be evaluated carefully for production deployments.
+
+### Security Notes
+
+* The Docker socket (`/var/run/docker.sock`) grants powerful access to the Docker daemon — restrict permissions appropriately.
+* Protect Loki from unauthorized network access.
+* Use authentication and TLS when logs leave the local host.
+* Monitor Alloy and Loki health, and watch for dropped entries.
+* Avoid unnecessarily large `max_chunk_age` values.
+
+---
+
 ## Current Status
 
 ```text
@@ -291,8 +393,8 @@ Filesystem Storage         ✅
 Compactor                  ✅
 Grafana Integration        ✅
 Grafana Explore            ✅
-Log Collection             ⏳ Planned
-Grafana Alloy              ⏳ Planned
+Grafana Alloy              ✅
+Log Collection             ✅
 ```
 
 ---
@@ -324,10 +426,6 @@ monitoring-vm
 
 ## Next Steps
 
-* Install Grafana Alloy
-* Configure log collection
-* Send Linux system logs to Loki
-* Collect Docker container logs
 * Query logs using LogQL
 * Build Grafana log dashboards
 * Configure log-based alerts
@@ -350,3 +448,7 @@ This lab demonstrates practical implementation of:
 * Grafana Explore
 * Centralized log management
 * Log querying with LogQL
+* Grafana Alloy deployment and configuration
+* systemd journal log collection
+* Docker container log collection via Docker service discovery
+* Loki ingestion troubleshooting and tuning

@@ -1,0 +1,34 @@
+logging {
+  level = "info"
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://127.0.0.1:3100/loki/api/v1/push"
+  }
+}
+
+loki.source.journal "system" {
+  forward_to = [loki.write.local.receiver]
+
+  labels = {
+    job  = "systemd-journal",
+    host = "monitoring-vm",
+  }
+}
+
+discovery.docker "linux" {
+  host = "unix:///var/run/docker.sock"
+}
+
+loki.source.docker "containers" {
+  host    = "unix:///var/run/docker.sock"
+  targets = discovery.docker.linux.targets
+
+  labels = {
+    app  = "docker",
+    host = "monitoring-vm",
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
